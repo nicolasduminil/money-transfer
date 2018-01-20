@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans" xmlns:jee="http://www.springframework.org/schema/jee" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd http://www.springframework.org/schema/jee http://www.springframework.org/schema/jee/spring-jee-3.0.xsd">
+  <jee:jndi-lookup id="_eap-jms-connection-factory" jndi-name="java:/ConnectionFactory"/>
+  <bean class="org.apache.camel.component.jms.JmsComponent" id="_jms-component">
+    <property name="connectionFactory" ref="_eap-jms-connection-factory"/>
+  </bean>
+  <bean class="fr.simplex_software.eip.money_transfer.StringifyBean" id="stringifyBean"/>
+  <bean class="fr.simplex_software.eip.money_transfer.TestProcessor" id="testProcessor"/>
+  <camelContext id="_jms-producer-context" xmlns="http://camel.apache.org/schema/spring">
+    <errorHandler id="defaultErrorHandler" type="DefaultErrorHandler"/>
+    <route id="_file-to-jms">
+      <from id="_file-poller" uri="file://{{jboss.server.data.dir}}/temp/inbox?charset=UTF-8&amp;directoryMustExist=true&amp;idempotent=true&amp;move=.done"/>
+      <log id="_log-before-split" message="*** Route _file-to-jms: We got a money transfer file: ${body}"/>
+      <unmarshal id="_jaxb-unmarshaler">
+        <jaxb contextPath="fr.simplex_software.eip.money_transfer.jaxb" prettyPrint="true" schemaLocation="xsd/money-transfer.xsd"/>
+      </unmarshal>
+      <log id="_log-after-unmarshal" message="*** Route _file-to-jms: We unmarshaled the XML payload to Java objects ${body}"/>
+      <split id="_split-by-list-item" streaming="true">
+        <simple>${body.moneyTransfers}</simple>
+        <!-- to id="_to-stringify-message" uri="bean:stringifyBean?method=stringify"/-->
+        <log id="_log-after-split" message="*** Route _file-to-jms: We splited the payload ${body}"/>
+        <marshal id="_json-marshaler">
+          <json library="Jackson"/>
+        </marshal>
+        <log id="_log-after-marshal" message="*** Route _file-to-jms: We marshaled the payload to JSON ${body}"/>
+        <to id="_jms-producer" pattern="InOnly" uri="jms:queue:bankQ?jmsMessageType=Text&amp;testConnectionOnStartup=true"/>
+      </split>
+      <!-- process id="_process1" ref="testProcessor"/-->
+    </route>
+    <route id="_jms-to-log">
+      <from id="_from-jms" uri="jms:queue:bankQ"/>
+      <log id="_log-from-jms" message="*** Route _from-jms: We got the following JMS message: ${body}"/>
+    </route>
+  </camelContext>
+</beans>
